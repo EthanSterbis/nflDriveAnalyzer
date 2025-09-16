@@ -8,82 +8,9 @@ library(bslib)
 library(DT)
 
 # =======================================================
-# Load Data
+# Load Precomputed Drive Data
 # =======================================================
-pbp <- read_csv("data/pbp.csv", show_col_types = FALSE)
-
-# Keep only plays with valid posteam & defteam
-pbp <- pbp %>% filter(!is.na(posteam), !is.na(defteam))
-
-# =======================================================
-# Safe helpers
-# =======================================================
-safe_min <- function(x) {
-  out <- suppressWarnings(min(x, na.rm = TRUE))
-  if (!is.finite(out)) NA_real_ else out
-}
-safe_max <- function(x) {
-  out <- suppressWarnings(max(x, na.rm = TRUE))
-  if (!is.finite(out)) NA_real_ else out
-}
-safe_time <- function(sec) {
-  ifelse(!is.finite(sec) | is.na(sec),
-         NA_character_,
-         sprintf("%02d:%02d", floor(sec / 60), round(sec %% 60)))
-}
-
-# =======================================================
-# Precompute drive-level aggregates
-# =======================================================
-make_drive_data <- function(dat){
-  dat %>%
-    rename(drive_result = fixed_drive_result) %>%
-    group_by(drive_id = paste(game_id, drive, posteam, sep="_")) %>%
-    summarise(
-      season        = first(season),
-      season_type   = first(season_type),
-      week          = first(week),
-      game_id       = first(game_id),
-      drive_num     = first(drive),
-      posteam       = first(posteam),
-      defteam       = first(defteam),
-      drive_result  = first(drive_result),
-      
-      Plays         = n(),
-      
-      PointsPerDrive = case_when(
-        drive_result == "Touchdown" ~ 6,
-        drive_result == "Field goal" ~ 3,
-        drive_result == "Opp touchdown" ~ -6,
-        drive_result == "Safety" ~ -2,
-        TRUE ~ 0
-      ),
-      
-      EPA_per_Play   = mean(epa, na.rm=TRUE),
-      WPA_per_Drive  = sum(wpa, na.rm=TRUE),
-      
-      DriveTimeSec   = safe_max(game_seconds_remaining) -
-        safe_min(game_seconds_remaining),
-      
-      Sacks          = sum(sack == 1, na.rm=TRUE),
-      ExplosivePlays = sum((pass == 1 & yards_gained >= 15) |
-                             (rush == 1 & yards_gained >= 10), na.rm=TRUE),
-      
-      PROE           = mean(pass_oe, na.rm=TRUE),
-      StartFP        = first(yardline_100),
-      
-      # Filters
-      MinWP = safe_min(wp),
-      MaxWP = safe_max(wp),
-      StartScoreDiff = first(posteam_score) - first(defteam_score),
-      StartQtr = first(qtr),
-      
-      .groups="drop"
-    ) %>%
-    mutate(`Time/Dr` = safe_time(DriveTimeSec))
-}
-
-drive_data <- make_drive_data(pbp)
+drive_data <- read_csv("data/drive_data.csv", show_col_types = FALSE)
 
 # =======================================================
 # Team List
@@ -100,60 +27,63 @@ ui <- fluidPage(
     fg      = "rgb(234,234,234)",
     primary = "#43B6FF"
   ),
-  tags$head(
-    tags$title("Sterb's NFL Drive Analyzer"),
-    tags$style(HTML("
-      th { text-align: center !important; }
-      td { text-align: center !important; }
-    "))
-  ),
+  tags$head(tags$title("Sterb's NFL Drive Analyzer")),
   h2("Sterb's NFL Drive Analyzer", style="padding-top:10px; font-size:22px;"),
   fluidRow(
-    column(3,
-           div(style="margin-left:10px; font-size:14px;",
-               h4("Filters"),
-               radioButtons("team_perspective", "Offense/Defense:",
-                            choices = c("Offense","Defense"),
-                            selected="Offense", inline=TRUE),
-               selectInput("season","Season(s)",
-                           choices=sort(unique(drive_data$season)),
-                           selected=max(drive_data$season), multiple=TRUE),
-               sliderInput("reg_weeks","Reg Weeks",
-                           min=0, max=18, value=c(1,18), step=2),
-               selectInput("post_weeks","Post Weeks",
-                           choices=c("None","WC","DIV","CONF","SB"), selected="None"),
-               checkboxGroupInput("quarters","Quarters:",
-                                  choices=c("1"=1,"2"=2,"3"=3,"4"=4,"OT"=5),
-                                  selected=c(1,2,3,4,5), inline=TRUE),
-               selectInput("posteam","Offense Team", choices=all_teams,
-                           selected=NULL, multiple=TRUE),
-               selectInput("defteam","Defense Team", choices=all_teams,
-                           selected=NULL, multiple=TRUE),
-               selectInput("drive_result","Drive Result",
-                           choices=sort(unique(drive_data$drive_result)),
-                           selected=NULL, multiple=TRUE),
-               selectInput("score_state","Score State",
-                           choices=c("Any","Leading","Trailing","Tied"),
-                           selected="Any"),
-               sliderInput("wp_range","Win Probability Range",
-                           min=0,max=1,value=c(0,1),step=0.05),
-               sliderInput("sack_range","# Sacks in Drive",
-                           min=0,max=5,value=c(0,5)),
-               sliderInput("explosive_range","Explosive Plays in Drive",
-                           min=0,max=5,value=c(0,5)),
-               sliderInput("start_fp_range","Starting Field Position",
-                           min=min(drive_data$StartFP, na.rm=TRUE),
-                           max=max(drive_data$StartFP, na.rm=TRUE),
-                           value=c(min(drive_data$StartFP, na.rm=TRUE),
-                                   max(drive_data$StartFP, na.rm=TRUE)))
-           )
+    column(
+      3,
+      div(
+        style="margin-left:15px; font-size:14px;",
+        h4("Filters"),
+        radioButtons(
+          "team_perspective", "Offense/Defense:",
+          choices = c("Offense","Defense"),
+          selected="Offense", inline=TRUE
+        ),
+        selectInput(
+          "season","Season(s)",
+          choices=sort(unique(drive_data$season)),
+          selected=max(drive_data$season), multiple=TRUE
+        ),
+        sliderInput("reg_weeks","Reg Weeks",
+                    min=0, max=18, value=c(1,18), step=2),
+        selectInput("post_weeks","Post Weeks",
+                    choices=c("None","WC","DIV","CONF","SB"), selected="None"),
+        checkboxGroupInput(
+          "quarters","Quarters:",
+          choices=c("1"=1,"2"=2,"3"=3,"4"=4,"OT"=5),
+          selected=c(1,2,3,4,5), inline=TRUE
+        ),
+        selectInput("posteam","Offense Team", choices=all_teams,
+                    selected=NULL, multiple=TRUE),
+        selectInput("defteam","Defense Team", choices=all_teams,
+                    selected=NULL, multiple=TRUE),
+        selectInput("drive_result","Drive Result",
+                    choices=sort(unique(drive_data$drive_result)),
+                    selected=NULL, multiple=TRUE),
+        selectInput("score_state","Score State",
+                    choices=c("Any","Leading","Trailing","Tied"),
+                    selected="Any"),
+        sliderInput("wp_range","Win Probability Range",
+                    min=0,max=1,value=c(0,1),step=0.05),
+        sliderInput("sack_range","# Sacks in Drive",
+                    min=0,max=5,value=c(0,5)),
+        sliderInput("explosive_range","Explosive Plays in Drive",
+                    min=0,max=5,value=c(0,5)),
+        sliderInput("start_fp_range","Starting Field Position",
+                    min=min(drive_data$StartFP, na.rm=TRUE),
+                    max=max(drive_data$StartFP, na.rm=TRUE),
+                    value=c(min(drive_data$StartFP, na.rm=TRUE),
+                            max(drive_data$StartFP, na.rm=TRUE)))
+      )
     ),
-    column(9,
-           tabsetPanel(
-             tabPanel("Drive Summary", DTOutput("summary_tbl")),
-             tabPanel("Drive Outcomes", DTOutput("outcome_tbl")),
-             tabPanel("Detailed Drives", DTOutput("drive_tbl"))
-           )
+    column(
+      9,
+      tabsetPanel(
+        tabPanel("Drive Summary", DTOutput("summary_tbl")),
+        tabPanel("Drive Outcomes", DTOutput("outcome_tbl")),
+        tabPanel("Detailed Drives", DTOutput("drive_tbl"))
+      )
     )
   )
 )
@@ -170,6 +100,7 @@ server <- function(input, output, session){
     if(length(input$defteam)) dat <- dat %>% filter(defteam %in% input$defteam)
     if(length(input$drive_result)) dat <- dat %>% filter(drive_result %in% input$drive_result)
     
+    # Postseason mapping
     if(input$post_weeks != "None"){
       wk_map <- c("WC"=19,"DIV"=20,"CONF"=21,"SB"=22)
       dat <- dat %>% filter(week == wk_map[[input$post_weeks]])
@@ -177,10 +108,12 @@ server <- function(input, output, session){
       dat <- dat %>% filter(week >= input$reg_weeks[1], week <= input$reg_weeks[2])
     }
     
+    # Quarter filter
     if(length(input$quarters)) {
       dat <- dat %>% filter(StartQtr %in% as.numeric(input$quarters))
     }
     
+    # Score state
     if (input$score_state == "Leading") {
       dat <- dat %>% filter(StartScoreDiff > 0)
     } else if (input$score_state == "Trailing") {
@@ -189,8 +122,12 @@ server <- function(input, output, session){
       dat <- dat %>% filter(StartScoreDiff == 0)
     }
     
+    # Win probability filter
     dat <- dat %>%
-      filter(!(MinWP > input$wp_range[2] | MaxWP < input$wp_range[1])) %>%
+      filter(!(MinWP > input$wp_range[2] | MaxWP < input$wp_range[1]))
+    
+    # Numeric filters
+    dat <- dat %>%
       filter(Sacks >= input$sack_range[1], Sacks <= input$sack_range[2],
              ExplosivePlays >= input$explosive_range[1], ExplosivePlays <= input$explosive_range[2],
              StartFP >= input$start_fp_range[1], StartFP <= input$start_fp_range[2])
@@ -207,44 +144,52 @@ server <- function(input, output, session){
         group_by(Team = posteam) %>%
         summarise(
           Drives = n(),
-          `Points/Dr` = mean(PointsPerDrive, na.rm=TRUE),
+          `Points/Dr`   = mean(PointsPerDrive, na.rm=TRUE),
           `EPA/Play/Dr` = mean(EPA_per_Play, na.rm=TRUE),
-          `WPA/Dr` = mean(WPA_per_Drive, na.rm=TRUE),
-          `Time/Dr` = safe_time(mean(DriveTimeSec, na.rm=TRUE)),
-          `Plays/Dr` = mean(Plays, na.rm=TRUE),
-          `Sacks/Dr` = mean(Sacks, na.rm=TRUE),
-          `Expl/Dr` = mean(ExplosivePlays, na.rm=TRUE),
+          `WPA/Dr`      = mean(WPA_per_Drive, na.rm=TRUE),
+          `Time/Dr`     = first(`Time/Dr`),  # already formatted in drive_data.csv
+          `Plays/Dr`    = mean(Plays, na.rm=TRUE),
+          `Sacks/Dr`    = mean(Sacks, na.rm=TRUE),
+          `Expl/Dr`     = mean(ExplosivePlays, na.rm=TRUE),
           `Starting FP` = mean(StartFP, na.rm=TRUE),
-          PROE = mean(PROE, na.rm=TRUE),
+          PROE          = mean(PROE, na.rm=TRUE),
           .groups="drop"
-        ) %>% arrange(desc(`Points/Dr`))
+        ) %>%
+        arrange(desc(`Points/Dr`))
     } else {
       agg <- dat %>%
         group_by(Team = defteam) %>%
         summarise(
           Drives = n(),
-          `Points/Dr` = mean(PointsPerDrive, na.rm=TRUE),
+          `Points/Dr`   = mean(PointsPerDrive, na.rm=TRUE),
           `EPA/Play/Dr` = mean(EPA_per_Play, na.rm=TRUE),
-          `WPA/Dr` = mean(WPA_per_Drive, na.rm=TRUE),
-          `Time/Dr` = safe_time(mean(DriveTimeSec, na.rm=TRUE)),
-          `Plays/Dr` = mean(Plays, na.rm=TRUE),
-          `Sacks/Dr` = mean(Sacks, na.rm=TRUE),
-          `Expl/Dr` = mean(ExplosivePlays, na.rm=TRUE),
+          `WPA/Dr`      = mean(WPA_per_Drive, na.rm=TRUE),
+          `Time/Dr`     = first(`Time/Dr`),
+          `Plays/Dr`    = mean(Plays, na.rm=TRUE),
+          `Sacks/Dr`    = mean(Sacks, na.rm=TRUE),
+          `Expl/Dr`     = mean(ExplosivePlays, na.rm=TRUE),
           `Starting FP` = mean(StartFP, na.rm=TRUE),
-          PROE = mean(PROE, na.rm=TRUE),
+          PROE          = mean(PROE, na.rm=TRUE),
           .groups="drop"
-        ) %>% arrange(`Points/Dr`)
+        ) %>%
+        arrange(`Points/Dr`)
     }
     
     agg <- agg %>%
       mutate(Rk = row_number()) %>%
       select(Rk, everything())
     
-    datatable(agg, rownames=FALSE, options=list(
-      dom="t", pageLength=nrow(agg), ordering=TRUE
-    )) %>%
-      formatRound(columns=3:ncol(agg), digits=3) %>%
-      formatRound(columns="Drives", digits=0)
+    datatable(
+      agg,
+      rownames=FALSE,
+      options=list(
+        dom="t", pageLength=nrow(agg), ordering=TRUE
+      )
+    ) %>%
+      formatRound(columns=3:NCOL(agg), digits=3) %>%
+      formatRound(columns="Drives", digits=0) %>%
+      formatStyle(columns=names(agg), `text-align`="center", target="cell") %>%
+      formatStyle(columns=names(agg), `text-align`="center", target="header")
   })
   
   # Drive Outcomes
@@ -256,44 +201,54 @@ server <- function(input, output, session){
              Pct = n/sum(n)) %>%
       select(`Drive Result`, `# Drives`, Pct)
     
-    datatable(out, rownames=FALSE, options=list(
-      dom="t", pageLength=nrow(out), ordering=TRUE
-    )) %>%
-      formatPercentage("Pct",3)
+    datatable(
+      out,
+      rownames=FALSE,
+      options=list(
+        dom="t", pageLength=nrow(out), ordering=TRUE
+      )
+    ) %>%
+      formatPercentage("Pct",3) %>%
+      formatStyle(columns=names(out), `text-align`="center", target="cell") %>%
+      formatStyle(columns=names(out), `text-align`="center", target="header")
   })
   
   # Detailed Drives
   output$drive_tbl <- renderDT({
     dat <- filtered() %>%
-      select(Season = season,
-             Offense = posteam,
-             Defense = defteam,
-             Drive = drive_num,
-             `Drive Result` = drive_result,
-             Plays,
-             `Points/Dr` = PointsPerDrive,
-             `Time/Dr`,
-             `EPA/Play/Dr` = EPA_per_Play,
-             `WPA/Dr` = WPA_per_Drive,
-             `Sacks/Dr` = Sacks,
-             `Expl/Dr` = ExplosivePlays,
-             `Starting FP` = StartFP,
-             PROE)
+      select(
+        Season = season,
+        Offense = posteam,
+        Defense = defteam,
+        Drive = drive_num,
+        `Drive Result` = drive_result,
+        Plays,
+        `Points/Dr` = PointsPerDrive,
+        `Time/Dr`,
+        `EPA/Play/Dr` = EPA_per_Play,
+        `WPA/Dr` = WPA_per_Drive,
+        `Sacks/Dr` = Sacks,
+        `Expl/Dr` = ExplosivePlays,
+        `Starting FP` = StartFP,
+        PROE
+      )
     
     datatable(
       dat,
       rownames = FALSE,
       options = list(
-        dom = "t",
-        paging = FALSE,
-        ordering = TRUE,
-        pageLength = nrow(dat)
+        dom="t",
+        paging=FALSE,
+        ordering=TRUE,
+        pageLength=nrow(dat),
+        lengthChange=FALSE
       )
     ) %>%
       formatRound(c("Points/Dr","EPA/Play/Dr","WPA/Dr",
-                    "Sacks/Dr","Expl/Dr","Starting FP","PROE"),3)
+                    "Sacks/Dr","Expl/Dr","Starting FP","PROE"),3) %>%
+      formatStyle(columns=names(dat), `text-align`="center", target="cell") %>%
+      formatStyle(columns=names(dat), `text-align`="center", target="header")
   })
-  
 }
 
 shinyApp(ui, server)
