@@ -1,0 +1,40 @@
+
+name: Auto Update Data
+
+on:
+  schedule:
+    - cron: "0 0 * * *"   # every day at 00:00 UTC
+  workflow_dispatch:       # allow manual runs
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.3.2"
+
+      - name: Install dependencies
+        run: |
+          Rscript -e "install.packages(c(\"tidyverse\",\"nflreadr\",\"vroom\",\"readr\"))"
+
+      - name: Update play-by-play data
+        run: |
+          Rscript -e "library(nflreadr); 
+                      dat <- load_pbp(seasons = most_recent_season()); 
+                      dir.create(\"data\", showWarnings=FALSE); 
+                      readr::write_csv(dat, \"data/pbp.csv\")"
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name \"github-actions[bot]\"
+          git config --global user.email \"41898282+github-actions[bot]@users.noreply.github.com\"
+          git add data/pbp.csv
+          git commit -m \"Auto-update pbp data [skip ci]\" || echo \"No changes to commit\"
+          git push
+
