@@ -27,13 +27,28 @@ ui <- fluidPage(
     fg      = "rgb(234,234,234)",
     primary = "#43B6FF"
   ),
-  tags$head(tags$title("Sterb's NFL Drive Analyzer")),
+  tags$head(
+    tags$title("Sterb's NFL Drive Analyzer"),
+    tags$style(HTML("
+      table.dataTable thead th {
+        text-align: center !important;
+      }
+      table.dataTable td {
+        font-size: 14px;
+        text-align: center;
+      }
+      table.dataTable th {
+        font-size: 12px;
+        text-align: center !important;
+      }
+    "))
+  ),
   h2("Sterb's NFL Drive Analyzer", style="padding-top:10px; font-size:22px;"),
   fluidRow(
     column(
-      3,
+      width = 3,  # slightly narrower filter column
       div(
-        style="margin-left:15px; font-size:14px;",
+        style="margin-left:10px; margin-right:5px; font-size:14px;",
         h4("Filters"),
         radioButtons(
           "team_perspective", "Offense/Defense:",
@@ -46,7 +61,7 @@ ui <- fluidPage(
           selected=max(drive_data$season), multiple=TRUE
         ),
         sliderInput("reg_weeks","Reg Weeks",
-                    min=0, max=18, value=c(1,18), step=2),
+                    min=1, max=18, value=c(1,18), step=1),  # allow individual weeks
         selectInput("post_weeks","Post Weeks",
                     choices=c("None","WC","DIV","CONF","SB"), selected="None"),
         checkboxGroupInput(
@@ -78,9 +93,10 @@ ui <- fluidPage(
       )
     ),
     column(
-      9,
+      width = 9,  # slightly wider table column
+      style="margin-left:-50px;",  # nudge table area left
       tabsetPanel(
-        tabPanel("Drive Summary", DTOutput("summary_tbl")),
+        tabPanel("Summary", DTOutput("summary_tbl")),
         tabPanel("Drive Outcomes", DTOutput("outcome_tbl")),
         tabPanel("Detailed Drives", DTOutput("drive_tbl"))
       )
@@ -147,14 +163,19 @@ server <- function(input, output, session){
           `Points/Dr`   = mean(PointsPerDrive, na.rm=TRUE),
           `EPA/Play/Dr` = mean(EPA_per_Play, na.rm=TRUE),
           `WPA/Dr`      = mean(WPA_per_Drive, na.rm=TRUE),
-          `Time/Dr`     = first(`Time/Dr`),  # already formatted in drive_data.csv
+          `Time/Dr`     = mean(DriveTimeSec, na.rm=TRUE),   # keep raw seconds
           `Plays/Dr`    = mean(Plays, na.rm=TRUE),
+          `Yds/Dr`      = mean(YardsPerDrive, na.rm=TRUE),
+          `PctYds/Dr`   = mean(PctYardsDrive, na.rm=TRUE),
           `Sacks/Dr`    = mean(Sacks, na.rm=TRUE),
           `Expl/Dr`     = mean(ExplosivePlays, na.rm=TRUE),
           `Starting FP` = mean(StartFP, na.rm=TRUE),
+          `EndFP`       = mean(EndFP, na.rm=TRUE),
           PROE          = mean(PROE, na.rm=TRUE),
           .groups="drop"
         ) %>%
+        # Convert seconds -> MM:SS string
+        mutate(`Time/Dr` = sprintf("%02d:%02d", floor(`Time/Dr`/60), round(`Time/Dr` %% 60))) %>%
         arrange(desc(`Points/Dr`))
     } else {
       agg <- dat %>%
@@ -164,14 +185,18 @@ server <- function(input, output, session){
           `Points/Dr`   = mean(PointsPerDrive, na.rm=TRUE),
           `EPA/Play/Dr` = mean(EPA_per_Play, na.rm=TRUE),
           `WPA/Dr`      = mean(WPA_per_Drive, na.rm=TRUE),
-          `Time/Dr`     = first(`Time/Dr`),
+          `Time/Dr`     = mean(DriveTimeSec, na.rm=TRUE),
           `Plays/Dr`    = mean(Plays, na.rm=TRUE),
+          `Yds/Dr`      = mean(YardsPerDrive, na.rm=TRUE),
+          `PctYds/Dr`   = mean(PctYardsDrive, na.rm=TRUE),
           `Sacks/Dr`    = mean(Sacks, na.rm=TRUE),
           `Expl/Dr`     = mean(ExplosivePlays, na.rm=TRUE),
           `Starting FP` = mean(StartFP, na.rm=TRUE),
+          `EndFP`       = mean(EndFP, na.rm=TRUE),
           PROE          = mean(PROE, na.rm=TRUE),
           .groups="drop"
         ) %>%
+        mutate(`Time/Dr` = sprintf("%02d:%02d", floor(`Time/Dr`/60), round(`Time/Dr` %% 60))) %>%
         arrange(`Points/Dr`)
     }
     
@@ -186,13 +211,12 @@ server <- function(input, output, session){
         dom="t", pageLength=nrow(agg), ordering=TRUE
       )
     ) %>%
-      formatRound(columns=3:NCOL(agg), digits=3) %>%
+      formatRound(columns=c("Points/Dr","EPA/Play/Dr","WPA/Dr","Plays/Dr",
+                            "Yds/Dr","PctYds/Dr","Sacks/Dr","Expl/Dr","Starting FP","EndFP","PROE"), digits=3) %>%
       formatRound(columns="Drives", digits=0) %>%
-      formatStyle(columns=names(agg), `text-align`="center", target="cell") %>%
-      formatStyle(columns=names(agg), `text-align`="center", target="header")
+      formatStyle(columns=names(agg), `text-align`="center", target="cell")
   })
   
-  # Drive Outcomes
   output$outcome_tbl <- renderDT({
     dat <- filtered()
     out <- dat %>%
@@ -205,21 +229,37 @@ server <- function(input, output, session){
       out,
       rownames=FALSE,
       options=list(
-        dom="t", pageLength=nrow(out), ordering=TRUE
-      )
+        dom="t", 
+        pageLength=nrow(out), 
+        ordering=TRUE
+      ),
+      class = "cell-border stripe hover"
     ) %>%
       formatPercentage("Pct",3) %>%
-      formatStyle(columns=names(out), `text-align`="center", target="cell") %>%
-      formatStyle(columns=names(out), `text-align`="center", target="header")
+      formatStyle(columns=names(out), 
+                  `text-align`="center", 
+                  target="cell")
   })
   
   # Detailed Drives
   output$drive_tbl <- renderDT({
     dat <- filtered() %>%
+      mutate(`Time/Dr` = sub(":00$", "", `Time/Dr`)) %>%
+      mutate(`StartGC` = sub(":00$", "", `StartGC`)) %>%
+      arrange(
+        season,
+        week,
+        posteam,
+        StartQtr,
+        desc(StartGC)
+      ) %>%
       select(
         Season = season,
+        Week = week,
         Offense = posteam,
         Defense = defteam,
+        Qtr = StartQtr,
+        GC = StartGC,
         Drive = drive_num,
         `Drive Result` = drive_result,
         Plays,
@@ -227,9 +267,12 @@ server <- function(input, output, session){
         `Time/Dr`,
         `EPA/Play/Dr` = EPA_per_Play,
         `WPA/Dr` = WPA_per_Drive,
+        `Yds/Dr` = YardsPerDrive,
+        `PctYds/Dr` = PctYardsDrive,
         `Sacks/Dr` = Sacks,
         `Expl/Dr` = ExplosivePlays,
         `Starting FP` = StartFP,
+        `EndFP`,
         PROE
       )
     
@@ -244,10 +287,9 @@ server <- function(input, output, session){
         lengthChange=FALSE
       )
     ) %>%
-      formatRound(c("Points/Dr","EPA/Play/Dr","WPA/Dr",
-                    "Sacks/Dr","Expl/Dr","Starting FP","PROE"),3) %>%
-      formatStyle(columns=names(dat), `text-align`="center", target="cell") %>%
-      formatStyle(columns=names(dat), `text-align`="center", target="header")
+      formatRound(c("Points/Dr","EPA/Play/Dr","WPA/Dr","Yds/Dr","PctYds/Dr",
+                    "Sacks/Dr","Expl/Dr","Starting FP","EndFP","PROE"),3) %>%
+      formatStyle(columns=names(dat), `text-align`="center", target="cell")
   })
 }
 
